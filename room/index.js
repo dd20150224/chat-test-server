@@ -117,15 +117,8 @@ const roomHandler = (io, socket) => {
 
     // room messages
     const messages = await getRoomMessages(roomId);
-    // console.log('enter-group-room: messages: ', messages);
     socket.emit('init-room', { room, messages })
 
-    // console.log('enter-group-room: roomId = ' + roomId);
-    // console.log('socket.rooms: ', socket.rooms);
-    // for (let i = 0; i < socket.rooms.length; i++) {
-    //   const loopRoom = socket.rooms[i];
-    //   console.log(`i=${i}: loopRoom: ${loopRoom}`);
-    // }
   });
 
   socket.on('enter-user-room', async ({userIdPair}) => {
@@ -138,9 +131,8 @@ const roomHandler = (io, socket) => {
     joinRoom(socket, clients, room.id);
 
     // room messages
-    const messages = getRoomMessages(room.id);
+    const messages = await getRoomMessages(room.id);
     socket.emit('init-room', {room, messages});
-    // console.log('enter-user-room: userIdPair: ', userIdPair);    
   });
 
   socket.on('join-room', (data) => {
