@@ -135,7 +135,13 @@ const findUserRooms = async (userId) => {
     'name': '',
     'ownerId': '',
     'userIds': userObjId
-  });
+  }).lean();
+  rooms = rooms.map(room => {
+    return {
+      ...room,
+      id: room._id.toString()
+    }
+  })
   // console.log('findUserRooms: rooms: ', rooms);
   return rooms;
 }
@@ -143,44 +149,71 @@ const findUserRooms = async (userId) => {
 const findGroupRooms = async (userId) => {
   // console.log('findGroupRooms: userId = ' + userId)
   let rooms = await Room.find({
-    $or: [{ ownerId: userId }, { userIds: userId }],
+    $and: [
+      {
+        ownerId: {$ne: '' },
+      },
+      {
+        $or: [{ ownerId: userId }, { userIds: userId }],
+      },
+    ],
+  }).lean();
+  rooms = rooms.map(room => {
+    return {
+      ...room,
+      id: room._id.toString()
+    }
   });
+  // console.log('getGroupRooms: rooms: ', rooms);
   // rooms.map((room) => {
   //   room.id = room._id.toString()
   // })
     // console.log('findGroupRooms: rooms: ', rooms)
-  // for (let i = 0; i < rooms.length; i++) {
-  //   const loopRoom = rooms[i];
-  //   console.log(`Room ${loopRoom.name}: users: ${loopRoom.userIds.length}`)    
-  // }
+  for (let i = 0; i < rooms.length; i++) {
+    const loopRoom = rooms[i];
+    console.log(`Room ${loopRoom.name}: users: ${loopRoom.userIds.length}`)    
+  }
+
   return rooms
 }
 
 const saveRoom = async (room) => {
-  let result = null;
+  let addedUserIds = [];
+  let removedUserIds = [];
+  let updatedUserIds = [];
   console.log('saveRoom: room: ', room);
   console.log('saveRoom: room.id: ' + (room.id ? 'yes' : 'no'));
   let roomObjId = null;
   if (room.id) {
     console.log('saveRoom: exists room.id = ' + room.id);
     roomObjId = new Mongoose.Types.ObjectId(room.id)
+    const oldRoom = await Room.findById(roomObjId).lean();
+
+    const oldUserIds = oldRoom.userIds;
+    const newUserIds = room.userIds;
+
+    addedUserIds = newUserIds.filter( userId => !oldUserIds.includes(userId));
+    removedUserIds = oldUserIds.filter( userId => !newUserIds.includes(userId));
+    updatedUserIds = newUserIds.filter( userId => oldUserIds.includes(userId));
+
     const updatedData = {
       ownerId: room.ownerId,
       name: room.name,
       userIds: room.userIds
     }
-    result = await Room.updateOne({_id: roomObjId}, updatedData);
+    await Room.updateOne({_id: roomObjId}, updatedData);
   } else {
     delete room.id;
     console.log('saveRoom: no id');
     try {
+      addedUserIds = room.userIds
       const newRoom = new Room({
         ownerId: room.ownerId,
         name: room.name,
         userIds: room.userIds
       });
       console.log('newRoom: ', newRoom)      
-      result = await newRoom.save()
+      const result = await newRoom.save()
       roomObjId = result._id;
       console.log('saveRoom after save: result: ', result);
     } catch(err) {
@@ -188,10 +221,15 @@ const saveRoom = async (room) => {
       throw (err);
     }
   }
-  result = await Room.findById(roomObjId);
-  console.log('saveRoom result: ', result);
-  console.log('saveRoom result.id = ' + result.id);
-  return result;
+  const addedRoom = await Room.findById(roomObjId);
+  // console.log('saveRoom result: ', result);
+  // console.log('saveRoom result.id = ' + result.id);
+  return {
+    addedUserIds,
+    removedUserIds,
+    updatedUserIds,
+    room: addedRoom
+  };
 }
 
 module.exports = {

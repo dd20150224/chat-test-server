@@ -16,6 +16,7 @@ const {
   getRoomMessages,
   saveRoom,
 } = require('./helpers');
+const e = require('express');
 
 let clients = []
 let rooms = []
@@ -58,13 +59,52 @@ const roomHandler = (io, socket) => {
     if (userId) {
       // console.log('emitRoomsStatus: userId = ' + userId);
       const userRooms = await findUserRooms(userId);
+      console.log('emitRoomsStatus: userRooms.length = ' + userRooms.length);
+
       const groupRooms = await findGroupRooms(userId);
+      console.log('emitRoomsStatus: groupRooms.length = ' + groupRooms.length);
+
       // console.log('groupRooms: ', groupRooms);
       const rooms = [...userRooms, ...groupRooms];
 
-      console.log('emitRoomsStatus: rooms: ', rooms);
+      // console.log('emitRoomsStatus: rooms: ', rooms);
       socket.emit('rooms-status', { rooms });
     }
+  }
+
+  const emitRoomStatusByUserIds = async (userIds, room) => {
+    const userIdSet = new Set(userIds)
+    console.log('emitRoomStatusByUserIds: userIdSet: ', userIdSet);
+    if (room.ownerId) userIdSet.add(room.ownerId)
+    console.log('emitRoomStatusByUserIds: userIdSet: ', userIdSet)
+    const allUserIds = Array.from(userIdSet)
+    console.log('emitRoomStatusByUserIds: allUserIds: ', allUserIds)
+    const sockets = await getSocketsByUserIds(clients, allUserIds)
+    console.log('emitRoomStatusByUserIds: sockets.length = ' + sockets.length);
+    sockets.forEach(socket => {
+      socket.emit('room-status', {room});
+    })
+  }
+
+  const emitRoomsStatusByUserIds = async (userIds, room) => {
+    const userIdSet = new Set(userIds);
+    if (room.ownerId) userIdSet.add(room.ownerId)
+    const allUserIds = Array.from(userIdSet)
+    const sockets = await getSocketsByUserIds(clients, allUserIds);
+    console.log('emitRoomsStatusByUserIds sockets.length = ' + sockets.length);
+    for (let i = 0; i < sockets.length; i++) {
+      const loopSocket = sockets[i];
+      const userId = await getSocketUserId(loopSocket, clients);
+      const relatedRooms = await findGroupRooms(userId);
+      console.log(`i=${i}: userid = ${userId}  rooms.length=${relatedRooms.length}`);
+      loopSocket.emit('rooms-status', { rooms: relatedRooms });
+    }
+    // socket.join(room.id);
+    // const userId = await getSocketUserId(socket, clients);
+    // const relatedRooms = await findGroupRooms(userId);
+    // logClients();
+    // logRooms();
+    // socket.emit('rooms-status', { rooms: relatedRooms });
   }
 
   socket.on('get-users-status', (data) => {
@@ -151,17 +191,30 @@ const roomHandler = (io, socket) => {
   })
 
   socket.on('save-room', async (data) => {
-    const room = await saveRoom(data.room);
-    const allUserIds = [...room.userIds];
-    if (room.ownerId) allUserIds.push(room.ownerId);
+    const {room, removedUserIds, addedUserIds, updatedUserIds} = await saveRoom(data.room);
 
-    const onlineSockets = await getSocketsByUserIds(clients, allUserIds);
+    // update room status (for updatedUserIds);
+    console.log('update room status');
+    console.log('updatedUserIds: ', updatedUserIds);
+    await emitRoomStatusByUserIds(updatedUserIds, room);
 
-    console.log('this socket.id = ' + socket.id);
-    onlineSockets.forEach(onlineSocket => {
-      console.log('   onlineSocket.id = ' + onlineSocket.id);
-      onlineSocket.emit('room-status', { room })
-    })
+    // update room list (for addedUserIds and removedUserIds)
+    console.log('udpate room list');
+    console.log('addedUserIds: ', addedUserIds)
+    console.log('removedUserIds: ', removedUserIds)
+    
+    const allUserIds = [...addedUserIds, ...removedUserIds];
+    await emitRoomsStatusByUserIds(allUserIds, room);
+    
+    // if (room.ownerId) allUserIds.push(room.ownerId);
+
+    // const onlineSockets = await getSocketsByUserIds(clients, allUserIds);
+
+    // console.log('this socket.id = ' + socket.id);
+    // onlineSockets.forEach(onlineSocket => {
+    //   console.log('   onlineSocket.id = ' + onlineSocket.id);
+    //   onlineSocket.emit('room-status', { room })
+    // })
     // socket.join(room.id);
     // const userId = await getSocketUserId(socket, clients);    
     // const relatedRooms = await findGroupRooms(userId);
