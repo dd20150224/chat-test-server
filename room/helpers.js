@@ -57,6 +57,16 @@ const getUserNewMessagesInfo = async (userId) => {
   return user?.newMessages || [];
 }
 
+const getMessageCountFromUser = async (userId, senderId) => {
+  const user = await User.findOne({appUserId: userId});
+  let result = 0;
+  if (user?.newMessages) {
+    const messageInfo = user.newMessages.find(item => (item.type==='user' && item.id===senderId));
+    if (messageInfo) result = messageInfo.count;
+  }
+  return result;
+}
+
 const getRoom = async (roomId) => {
   return await Room.findById(roomId);
 }
@@ -329,6 +339,7 @@ module.exports = {
   getRoomUserIds,
   getUser,
   getUserNewMessagesInfo,
+  getMessageCountFromUser,
   getRoomMessages,
   saveRoom,
   incrementUsersNewMessageCount,

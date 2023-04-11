@@ -18,6 +18,7 @@ const {
   getRoomMessages,
   saveRoom,
   incrementUsersNewMessageCount,
+  getMessageCountFromUser,
 } = require('./helpers');
 const e = require('express');
 
