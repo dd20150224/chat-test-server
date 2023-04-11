@@ -22,15 +22,18 @@ const joinRoom = (socket, clients, roomId) => {
   }
 }
 
-const getSocketsByUserIds = async(clients, userIds) => {
-  console.log('getSocketsByUserIds: userIds: ', userIds);
-  console.log('getSocketsByUserIds: clients.length = ' + clients.length);
-  const filteredClients = clients.filter(client => userIds.includes(client.userId))
-  console.log('getSocketsByUserIds: filteredClients.length = ' + filteredClients.length);
-  for (let i = 0; i < filteredClients.length; i++) {
-    const loop = filteredClients[i];
-    console.log(`i=${i}: userId = ${loop.userId}`);
+const extracttOnlineUserSockets = async(clients, userIds) => {
+  if (!Array.isArray(userIds)) {
+    userIds = userIds.toArray();
   }
+  console.log('extracttOnlineUserSockets: userIds: ', userIds);
+  console.log('extracttOnlineUserSockets: clients.length = ' + clients.length);
+  const filteredClients = clients.filter(client => userIds.includes(client.userId))
+  console.log('extracttOnlineUserSockets: filteredClients.length = ' + filteredClients.length);
+  // for (let i = 0; i < filteredClients.length; i++) {
+  //   const loop = filteredClients[i];
+  //   console.log(`i=${i}: userId = ${loop.userId}`);
+  // }
   const sockets = filteredClients.map((client) => client.socket)
   return sockets;
 }
@@ -49,8 +52,18 @@ const getUser = async (userId) => {
   return await User.findOne({appUserId: userId});
 }
 
+const getUserNewMessagesInfo = async (userId) => {
+  const user = await User.findOne({appUserId: userId});
+  return user?.newMessages || [];
+}
+
 const getRoom = async (roomId) => {
   return await Room.findById(roomId);
+}
+
+const getRoomUserIds = async (roomId) => {
+  const room = await getRoom(roomId);
+  return room ? new Set(room.userIds) : new Set();
 }
 
 const getRoomMessages = async (roomId) => {
@@ -124,6 +137,77 @@ const checkUser = async ({userId, displayName, firstName, lastName, avatarUrl}) 
       newMessages: []
     })
     await newUser.save();
+  }
+}
+
+const incrementUsersNewMessageCount = async(roomUserIdSet, room, senderId) => {
+  const type = room.ownerId === '' ? 'user' : 'room';
+  if (type === 'room') {
+    await incrementUsersNewMessageCountForRoom(roomUserIdSet, room);    
+  } else {
+    await incrementUsersNewMessageCountForUser(roomUserIdSet, senderId);    
+  }
+}
+
+const incrementUsersNewMessageCountForRoom = async (userIdset, room) => {
+  for (userId of userIdset) {
+    const userObjId = new Mongoose.Types.ObjectId(userId);
+    const user = await User.find({_id: userObjId}, {newMessages: 1}).lean();
+    let newMessages = user.newMessages;
+    if (newMessages) {
+      const index = newMessages.find(item => (item.id === room.id && item.type === 'room'));
+      if (index >= 0) {
+        newMessages[index].count++;
+      } else {
+        newMessages.push({
+          type: 'room',
+          id: room.id,
+          count: 1,
+        })
+      }
+    } else {
+      newMessages = [{
+        type: 'room',
+        id: room.id,
+        count: 1,
+      }];
+    }
+    await User.updateOne({_id: userObjId},
+      {
+        $set: {newMessages}
+      }
+    );
+  } 
+}
+
+const incrementUsersNewMessageCountForUser = async (userIdSet, senderId) => {
+  for (userId of userIdSet) {
+    const user = await User.find({appUserId: userId}, {newMessages: 1}).lean();
+    let newMessages = user.newMessages;
+    if (newMessages) {
+      const index = newMessages.find(item => (item.id === senderId && item.type === 'user'))      
+      if (index >= 0) {
+        newMessages[index].count++;
+      } else {
+        newMessages.push({
+          type: 'user',
+          id: senderId,
+          count: 1,
+        })
+      }       
+    } else {
+      newMessages = [{
+        type: 'user',
+        id: senderId,
+        count: 1,
+      }]
+    }
+    console.log(`add message count  user #${userId}: message: `, newMessages);
+    await User.updateOne({appUserId: userId},
+      {
+        $set: {newMessages}
+      }
+    );
   }
 }
 
@@ -236,13 +320,16 @@ module.exports = {
   leaveCurrentRoom,
   joinRoom,
   getSocketUserId,
-  getSocketsByUserIds,
+  extracttOnlineUserSockets,
   checkUser,
   checkUserRoom,
   findGroupRooms,
   findUserRooms,
   getRoom,
+  getRoomUserIds,
   getUser,
+  getUserNewMessagesInfo,
   getRoomMessages,
   saveRoom,
+  incrementUsersNewMessageCount,
 };

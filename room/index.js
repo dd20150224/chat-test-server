@@ -6,15 +6,18 @@ const {
   leaveCurrentRoom,
   joinRoom,
   getSocketUserId,
-  getSocketsByUserIds,
+  extracttOnlineUserSockets,
   checkUser,
   checkUserRoom,
   findUserRooms,
   findGroupRooms,
   getRoom,
+  getRoomUserIds,
   getUser,
+  getUserNewMessagesInfo,
   getRoomMessages,
   saveRoom,
+  incrementUsersNewMessageCount,
 } = require('./helpers');
 const e = require('express');
 
@@ -51,7 +54,10 @@ const roomHandler = (io, socket) => {
     const activeUserIds = clients
       .filter((client) => client.userId !== '')
       .map((client) => client.userId)
-    socket.emit('users-status', { userIds: activeUserIds })
+    const userId = await getSocketUserId(socket, clients);
+    console.log('get user new messages info : userId = ' + userId);
+    const newMessagesInfo = await getUserNewMessagesInfo(userId);
+    socket.emit('users-status', { userIds: activeUserIds, newMessagesInfo })
   }
 
   const emitRoomsStatus = async () => {
@@ -79,7 +85,7 @@ const roomHandler = (io, socket) => {
     console.log('emitRoomStatusByUserIds: userIdSet: ', userIdSet)
     const allUserIds = Array.from(userIdSet)
     console.log('emitRoomStatusByUserIds: allUserIds: ', allUserIds)
-    const sockets = await getSocketsByUserIds(clients, allUserIds)
+    const sockets = await extracttOnlineUserSockets(clients, allUserIds)
     console.log('emitRoomStatusByUserIds: sockets.length = ' + sockets.length);
     sockets.forEach(socket => {
       socket.emit('room-status', {room});
@@ -90,7 +96,7 @@ const roomHandler = (io, socket) => {
     const userIdSet = new Set(userIds);
     if (room.ownerId) userIdSet.add(room.ownerId)
     const allUserIds = Array.from(userIdSet)
-    const sockets = await getSocketsByUserIds(clients, allUserIds);
+    const sockets = await extracttOnlineUserSockets(clients, allUserIds);
     console.log('emitRoomsStatusByUserIds sockets.length = ' + sockets.length);
     for (let i = 0; i < sockets.length; i++) {
       const loopSocket = sockets[i];
@@ -208,7 +214,7 @@ const roomHandler = (io, socket) => {
     
     // if (room.ownerId) allUserIds.push(room.ownerId);
 
-    // const onlineSockets = await getSocketsByUserIds(clients, allUserIds);
+    // const onlineSockets = await extracttOnlineUserSockets(clients, allUserIds);
 
     // console.log('this socket.id = ' + socket.id);
     // onlineSockets.forEach(onlineSocket => {
@@ -252,9 +258,28 @@ const roomHandler = (io, socket) => {
       }
       delete flatMessage.sender
     }
-    // braodcast message count
+    const socketUserId = await getSocketUserId(socket, clients);
 
+    // update new message count
+    const room = await getRoom(payload.roomId);
+    const roomUserIdSet = new Set(room.userIds);
+    roomUserIdSet.delete(socketUserId);
 
+    if (roomUserIdSet.size > 0) {
+      await incrementUsersNewMessageCount(roomUserIdSet, room, socketUserId);
+
+      // broadcast message count
+      const otherClients = clients.filter(client => roomUserIdSet.has(client.userId));
+      otherClients.forEach(async(client) => {
+        const newMessageCount = await getMessageCountFromUser(client.userId, socketUserId);
+        client.socket.emit('user-status-update', {
+          isOn: true,
+          userId: socketUserId,
+          newMessageCount
+        })
+      });
+    }
+    
     // broadcast message for active chat-room
     console.log('on(message) to room: ' + payload.roomId);
     console.log('flatMessage: ', flatMessage)
