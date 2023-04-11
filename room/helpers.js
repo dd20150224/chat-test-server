@@ -57,6 +57,60 @@ const getUserNewMessagesInfo = async (userId) => {
   return user?.newMessages || [];
 }
 
+const resetNewMessageCount = async (userId, room) => {
+  const isGroupRoom = room.ownerId !== '';
+  console.log('resetNewMessageCount: isGroupRoom = ' + (isGroupRoom ? 'yes' : 'no'));
+  console.log('resetNewMessageCount: userId = ' + userId);
+  const user = await User.findOne({appUserId: userId}).lean();
+  const newMessages = user.newMessages; 
+  console.log('resetNewMessageCount: newMessages: ', newMessages);
+  if (newMessages && newMessages.length>0) {
+    console.log('newMessages>0');
+    if (isGroupRoom) {
+      return await resetNewMessageCountRoom(userId, room, newMessages);
+    } else {
+      console.log('room.userIds: ', room.userIds);
+      const userIdSet = new Set(room.userIds);
+      userIdSet.delete(userId);
+      console.log('userIdset: ', userIdSet)
+      const [targetUserId] = userIdSet;
+      console.log('targetUserId = ' + targetUserId);
+      return await resetNewMessageCountUser(userId, targetUserId, newMessages);
+    }
+  }
+  return false;
+}
+
+const resetNewMessageCountRoom = async (userId, room, newMessages) => {
+  const i = newMessages.findIndex(item => (item.id === room.id && item.type === 'room'));
+  if (i >= 0) {
+    newMessages[i].count = 0;
+    await User.updateOne(
+      { appUserId: userId }, 
+      {
+        $set: {newMessages}
+      }
+    );
+    return true;
+  }
+  return false;
+}
+
+const resetNewMessageCountUser = async (userId, targetUserId, newMessages) => {
+  const i = newMessages.findIndex(item => (item.id === targetUserId && item.type === 'user'))
+  if (i >= 0) {
+    newMessages[i].count = 0
+    await User.updateOne(
+      { appUserId: userId },
+      {
+        $set: { newMessages },
+      }
+    );
+    return true;
+  }
+  return false;
+}
+
 const getMessageCountFromUser = async (userId, senderId) => {
   const user = await User.findOne({appUserId: userId});
   let result = 0;
@@ -152,6 +206,7 @@ const checkUser = async ({userId, displayName, firstName, lastName, avatarUrl}) 
 
 const incrementUsersNewMessageCount = async(roomUserIdSet, room, senderId) => {
   const type = room.ownerId === '' ? 'user' : 'room';
+  console.log('incrementUsersNewMessageCount  type = ' + type);
   if (type === 'room') {
     await incrementUsersNewMessageCountForRoom(roomUserIdSet, room);    
   } else {
@@ -191,11 +246,20 @@ const incrementUsersNewMessageCountForRoom = async (userIdset, room) => {
 }
 
 const incrementUsersNewMessageCountForUser = async (userIdSet, senderId) => {
+  console.log('incrementUsersNewMessageCountForUser  userIdSet: ', userIdSet);
+  console.log('incrementUsersNewMessageCountForUser  senderId: ', senderId)
+
   for (userId of userIdSet) {
-    const user = await User.find({appUserId: userId}, {newMessages: 1}).lean();
+    console.log('incrementUsersNewMessageCountForUser userId = ' + userId);
+    const user = await User.findOne({appUserId: userId}, {newMessages: 1}).lean();
+    console.log('incrementUsersNewMessageCountForUser user: ', user);
+
     let newMessages = user.newMessages;
+    console.log('newMessages: ', newMessages);
     if (newMessages) {
-      const index = newMessages.find(item => (item.id === senderId && item.type === 'user'))      
+      console.log('newMessages: ', newMessages);
+      const index = newMessages.findIndex(item => (item.id === senderId && item.type === 'user'))      
+      console.log('incrementUsersNewMessageCountForUser  index = ' + index);
       if (index >= 0) {
         newMessages[index].count++;
       } else {
@@ -326,6 +390,26 @@ const saveRoom = async (room) => {
   };
 }
 
+const getActiveUserIds = (clients) => {
+  return clients
+    .filter((client) => client.userId !== '')
+    .map((client) => client.userId)
+}
+
+const getAnotherRoomUser = async (room, userId) => {
+  const userIds = new Set(room.userIds)
+  userIds.delete(userId)
+  const [anotherUserId] = userIds
+  return anotherUserId
+}
+
+const isUserOnline = (userId, clients) => {  
+  console.log('isUserOnline userId = ' + userId);
+  const client = clients.find(client => client.userId === userId);
+  console.log('isUserOnline: client: ', client);
+  return client !== null && client !== undefined;
+}
+
 module.exports = {
   leaveCurrentRoom,
   joinRoom,
@@ -343,4 +427,8 @@ module.exports = {
   getRoomMessages,
   saveRoom,
   incrementUsersNewMessageCount,
-};
+  getActiveUserIds,
+  resetNewMessageCount,
+  getAnotherRoomUser,
+  isUserOnline,
+}

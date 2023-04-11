@@ -19,7 +19,11 @@ const {
   saveRoom,
   incrementUsersNewMessageCount,
   getMessageCountFromUser,
-} = require('./helpers');
+  getActiveUserIds,
+  resetNewMessageCount,
+  getAnotherRoomUser,
+  isUserOnline
+} = require('./helpers')
 const e = require('express');
 
 let clients = []
@@ -51,31 +55,47 @@ const roomHandler = (io, socket) => {
     `Client connected: ${socket.id}   // total client = ${clients.length}`
   )
 
-  const emitUsersStatus = async () => {
-    const activeUserIds = clients
-      .filter((client) => client.userId !== '')
-      .map((client) => client.userId)
+  const broadcastUserStatus = async (payload) => {
+    const senderId = payload.userId
+    console.log('broadcastUserStatus senderId = ' + senderId)
+    const otherClients = clients.filter(client => (client.userId !== '' && client.userId !== senderId));
+    otherClients.forEach(async(client) => {
+      console.log(' forEach client.userId = ' + client.userId);
+      console.log(' forEach senderId = ' + senderId);
+      const newMessageCount = await getMessageCountFromUser(client.userId, senderId);      
+      client.socket.emit('user-status-update', {
+        ...payload,
+        newMessageCount,
+      })
+    });
+  }
+
+  const returnUsersStatus = async () => {
+    const activeUserIds = getActiveUserIds(clients);
+    // clients
+    //   .filter((client) => client.userId !== '')
+    //   .map((client) => client.userId)
     const userId = await getSocketUserId(socket, clients);
     console.log('get user new messages info : userId = ' + userId);
     const newMessagesInfo = await getUserNewMessagesInfo(userId);
     socket.emit('users-status', { userIds: activeUserIds, newMessagesInfo })
   }
 
-  const emitRoomsStatus = async () => {
+  const returnRoomsStatus = async () => {
     const userId = await getSocketUserId(socket, clients)
     if (userId) {
-      // console.log('emitRoomsStatus: userId = ' + userId);
-      const userRooms = await findUserRooms(userId);
-      console.log('emitRoomsStatus: userRooms.length = ' + userRooms.length);
+      // console.log('returnRoomsStatus: userId = ' + userId);
+      const userRooms = await findUserRooms(userId)
+      console.log('returnRoomsStatus: userRooms.length = ' + userRooms.length)
 
-      const groupRooms = await findGroupRooms(userId);
-      console.log('emitRoomsStatus: groupRooms.length = ' + groupRooms.length);
+      const groupRooms = await findGroupRooms(userId)
+      console.log('returnRoomsStatus: groupRooms.length = ' + groupRooms.length)
 
       // console.log('groupRooms: ', groupRooms);
-      const rooms = [...userRooms, ...groupRooms];
+      const rooms = [...userRooms, ...groupRooms]
 
-      // console.log('emitRoomsStatus: rooms: ', rooms);
-      socket.emit('rooms-status', { rooms });
+      // console.log('returnRoomsStatus: rooms: ', rooms);
+      socket.emit('rooms-status', { rooms })
     }
   }
 
@@ -117,7 +137,36 @@ const roomHandler = (io, socket) => {
   socket.on('get-users-status', (data) => {
     const activeUserIds = clients.filter(client => client.userId !== '').map(client => client.userId);
     socket.emit('users-status', {userIds: activeUserIds});
-  })
+  });
+
+  socket.on('reset-room-new-message-count', async (data) => {
+    const room = await getRoom(data.roomId);
+    const userId = await getSocketUserId(socket, clients);
+    console.log('reset-room-new-message-count: data.userId = ' + data.userId);
+    console.log('reset-room-new-message-count: data.roomId = ' + data.roomId);
+
+    const updated = await resetNewMessageCount(data.userId, room);
+    console.log('updated: ' + (updated ? 'yes' : 'no'));
+    if (updated) {
+      if (room.ownerId === '') {
+        // user
+        const targetUserId = await getAnotherRoomUser(room, userId);
+        const isOn = isUserOnline(targetUserId, clients);
+        console.log('targetUserId = ' + targetUserId);
+        console.log('isOn = ' + isOn);
+
+        socket.emit('user-status-update', {
+          isOn,
+          userId: targetUserId,
+          newMessages: 0
+        });
+      } else {        
+        // room
+        // 
+        // pending
+      }
+    }    
+  });
 
   socket.on('connect-user', async (data) => {
     // data = {
@@ -132,26 +181,35 @@ const roomHandler = (io, socket) => {
       const oldUserId = clients[i].userId
       if (oldUserId !== '') {
         console.log('socket: old user id #' + oldUserId);
-        socket.broadcast.emit('user-status-update', {
-          isOn: false,
-          userId: oldUserId,
-        })
+        await broadcastUserStatus({ isOn: false, userId: oldUserId });
+        
+        // socket.broadcast.emit('user-status-update', {
+        //   isOn: false,
+        //   userId: oldUserId,
+        // })
       }
       clients[i].userId = data.userId
       console.log('socket: updated user id #' + data.userId);
-      socket.broadcast.emit('user-status-update', {
-        isOn: true,
-        userId: data.userId,
-      })
+      // socket.broadcast.emit('user-status-update', {
+      //   isOn: true,
+      //   userId: data.userId,
+      // })
     } else {
       console.log('no client connected!');
     }
     leaveCurrentRoom(socket, clients);
     socket.emit('leave-room');
-    logClients();
-    logRooms();
-    emitUsersStatus();
-    emitRoomsStatus();
+    // logClients();
+    // logRooms();
+
+    await returnUsersStatus();
+    await returnRoomsStatus();
+
+    if (data.userId) {
+      console.log('connect-user: data.userId = ' + data.userId);
+      await broadcastUserStatus({ isOn: true, userId: data.userId });
+    }
+
   })
 
   socket.on('enter-group-room', async ({roomId}) => {
@@ -240,30 +298,40 @@ const roomHandler = (io, socket) => {
     // }
 
     // save message
+    console.log(1);
     const message = new Message(payload);
+    console.log(2)
     let newMessage = await message.save();
+    console.log(3)
     let newMessageWithSender = await Message.findById(message._id)
       .populate({
         path: 'sender',
         select: 'displayName avatarUrl letterName'})
     
     // let sender = await getUser(newMessage.senderId);
+    console.log(4)
     let flatMessage = null;
+    console.log(5)
     if (newMessageWithSender) {
       flatMessage = newMessageWithSender.toJSON()
+    console.log(6)
       flatMessage = {
         ...flatMessage,
         title: flatMessage.sender?.displayName,
         avatar: flatMessage.sender?.avatarUrl,
         letterItem: flatMessage.sender?.letterName,
       }
+    console.log(7)
       delete flatMessage.sender
     }
     const socketUserId = await getSocketUserId(socket, clients);
-
+    console.log('message socketUserId = ' + socketUserId);
     // update new message count
     const room = await getRoom(payload.roomId);
     const roomUserIdSet = new Set(room.userIds);
+    console.log('message room: ', room);
+    console.log('message roomUserIdSet: ', roomUserIdSet);
+
     roomUserIdSet.delete(socketUserId);
 
     if (roomUserIdSet.size > 0) {
@@ -287,26 +355,31 @@ const roomHandler = (io, socket) => {
     io.to(payload.roomId).emit('message', { message: flatMessage })
   })
 
-  socket.on('disconnect', () => {
+  socket.on('disconnect', async () => {
     console.log('disconnect: clients: ', clients.length);
     const i = clients.findIndex((client) => client.socket.id === socket.id);
+    console.log('disconnect: i = ' + i);
     if (i >= 0) {
       const oldUserId = clients[i].userId
       clients.splice(i, 1);
 
+      console.log('disconnect   oldUserId = ' + oldUserId);
       if (oldUserId !== '') {
         console.log('socket: old user id #' + oldUserId)
-        socket.broadcast.emit('user-status-update', {
+        await broadcastUserStatus({
           isOn: false,
-          userId: oldUserId,
-        })
+          userId: oldUserId
+        });
+        // socket.broadcast.emit('user-status-update', {
+        //   isOn: false,
+        //   userId: oldUserId,
+        // })
       }
       console.log(`User disconnected: total client = ${clients.length}`)
     } else {
       console.log('client of socket not found');
     }
   });
-
 }
 
 module.exports = {
