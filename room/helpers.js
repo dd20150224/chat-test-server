@@ -161,8 +161,8 @@ const incrementUsersNewMessageCount = async(roomUserIdSet, room, senderId) => {
 
 const incrementUsersNewMessageCountForRoom = async (userIdset, room) => {
   for (userId of userIdset) {
-    const userObjId = new Mongoose.Types.ObjectId(userId);
-    const user = await User.find({_id: userObjId}, {newMessages: 1}).lean();
+    // const userhhh = new Mongoose.Types.ObjectId(userId);
+    const user = await User.find({appUserId: userId}, {newMessages: 1}).lean();
     let newMessages = user.newMessages;
     if (newMessages) {
       const index = newMessages.find(item => (item.id === room.id && item.type === 'room'));
@@ -222,13 +222,13 @@ const incrementUsersNewMessageCountForUser = async (userIdSet, senderId) => {
 }
 
 const findUserRooms = async (userId) => {
-  const userObjId = new Mongoose.Types.ObjectId(userId);
+  // const userObjId = new Mongoose.Types.ObjectId(userId);
 
   // console.log('findUserRoom: userObjectIdPair: ', userObjectIdPair);
   let rooms = await Room.find({
     'name': '',
     'ownerId': '',
-    'userIds': userObjId
+    'userIds': userId
   }).lean();
   rooms = rooms.map(room => {
     return {
